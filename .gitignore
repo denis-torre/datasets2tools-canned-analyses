@@ -1,0 +1,6 @@
+*.sublime-project
+*.sublime-workspace
+*-checkpoint.ipynb
+g2e
+*.sqlite
+*.dir
