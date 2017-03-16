@@ -4,3 +4,4 @@
 g2e
 *.sqlite
 *.dir
+*.pyc

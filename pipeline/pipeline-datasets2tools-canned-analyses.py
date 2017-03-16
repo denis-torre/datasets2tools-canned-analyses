@@ -18,6 +18,7 @@ import rpy2.robjects as robjects
 import pandas.rpy.common as com
 import numpy as np
 from lxml import etree
+from collections import Counter
 
 ##### 2. Custom modules #####
 # Pipeline running
@@ -281,10 +282,10 @@ def getGseFiles(infile, outfile):
 	idList = xmltodict.parse(urllib2.urlopen(eSearchURL).read())['eSearchResult']['IdList']['Id']
 
 	# Initialize result
-	resultList = []
+	linkList = []
 
 	# Split in subsets
-	for idListSubset in np.array_split(idList, len(idList)/50):
+	for idListSubset in np.array_split(idList, len(idList)/100):
 
 	    # Create comma-separated string
 	    idString = ','.join(idListSubset)
@@ -296,19 +297,63 @@ def getGseFiles(infile, outfile):
 	    root = etree.fromstring(urllib2.urlopen(eSummaryURL).read())
 	    
 	    # Get data
-	    elemData = [[y.text for y in x.getchildren() if y.get('Name') in ['Accession', 'GDS', 'FTPLink']] for x in root]
+	    elemData = [[y.text for y in x.getchildren() if y.get('Name') in ['Accession', 'FTPLink', 'GPL']] for x in root]
 	    
 	    # Append
-	    resultList += elemData
-
+	    linkList += elemData
+	    
 	# Convert to dataframe
-	resultDataframe = pd.DataFrame(resultList, columns=['gds', 'id', 'ftp_link'])
+	linkDataframe = pd.DataFrame(linkList, columns=['geo_accession', 'gpl', 'ftp_link'])
 
-	# Fix FTP link
-	resultDataframe['ftp_link'] = [os.path.join(ftp_link, 'soft', gds+'.soft.gz') for gds, ftp_link in resultDataframe[['gds', 'ftp_link']].as_matrix()]
+	# Get result list
+	resultList = [P.getMatrixLink(geo_accession, gpl, ftp_link) for geo_accession, gpl, ftp_link in linkDataframe[['geo_accession', 'gpl', 'ftp_link']].as_matrix() if gpl != None]
+	resultList = [item for sublist in resultList for item in sublist]
 
-	# Save file
+	# Get link dataframe
+	resultDataframe = pd.DataFrame(resultList, columns=['geo_accession', 'platform' , 'matrix_link'])
+
+	# Write
 	resultDataframe.to_csv(outfile, sep='\t', index=False)
+
+#############################################
+########## 2. Split data
+#############################################
+
+@subdivide(getGseFiles,
+		   regex(r'(.*)/(.*)-geo_files.txt'),
+		   r'\1/split/\2-geo_files_*.txt',
+		   r'\1/split/\2-geo_files_')
+
+def splitGeoFiles(infile, outfiles, outfileRoot):
+
+	# Read data
+	geoDataframe = pd.read_table(infile).set_index('platform', drop=False)
+
+	# Get directory name
+	outDir = os.path.dirname(outfileRoot)
+
+	# Create directory, if not exists
+	if not os.path.exists(outDir):
+		os.makedirs(outDir)
+
+	# Get counter
+	platformCounts = Counter(geoDataframe.index)
+
+	# Select platforms
+	platforms = [platform for platform, count in platformCounts.iteritems() if count > 500]
+
+	# Loop
+	for platform in platforms:
+
+		# Get subset
+		geoDataframeSubset = geoDataframe.loc[platform]
+
+		# get outfile
+		outfile = "{outfileRoot}{platform}.txt".format(**locals())
+
+		# Write
+		geoDataframeSubset.to_csv(outfile, sep='\t', index=False)
+
 
 ##################################################
 ##################################################
