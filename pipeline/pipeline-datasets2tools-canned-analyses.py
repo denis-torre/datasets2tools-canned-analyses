@@ -12,7 +12,7 @@
 #############################################
 ##### 1. Python modules #####
 from ruffus import *
-import sys, os, glob, json, urllib2, xmltodict
+import sys, os, glob, json, urllib2, xmltodict, gzip, StringIO, requests
 import pandas as pd
 import rpy2.robjects as robjects
 import pandas.rpy.common as com
@@ -33,7 +33,7 @@ import orm
 ########## 2. General Setup
 #############################################
 ##### 1. Variables #####
-metadataFileNames = ['single_gene_perturbations-v1.0.csv', 'disease_signatures-v1.0.csv', 'single_drug_perturbations-v1.0.csv', 'single_drug_perturbations-DM.csv', 'single_gene_perturbations-p1.0.csv', 'disease_signatures-p1.0.csv', 'single_drug_perturbations-p1.0.csv']
+metadataFileNames = ['single_gene_perturbations-v1.0.csv', 'disease_signatures-v1.0.csv', 'single_drug_perturbations-v1.0.csv']#, 'single_drug_perturbations-DM.csv', 'single_gene_perturbations-p1.0.csv', 'disease_signatures-p1.0.csv', 'single_drug_perturbations-p1.0.csv']
 dbFile = 'g2e/db.json'
 
 ##### 2. R Connection #####
@@ -113,15 +113,19 @@ def getCreedsLinks(infile, outfile):
 	print 'Doing', infile, '...'
 
 	# Get dataframe
-	creedsDataframe = pd.read_csv(infile, index_col='id').iloc[:10,]
+	creedsDataframe = pd.read_csv(infile, index_col='id')
 
 	# Initialize dict
 	linkDict = {x:{} for x in creedsDataframe.index}
 
+	i = 0
+	n = len(creedsDataframe.index)
+
 	# Loop through IDs
 	for creedsId in creedsDataframe.index:
 
-		print creedsId
+		i += 1
+		print 'Doing %(creedsId)s, %(i)s/%(n)s...' % locals()
 
 		# Get DBSignature
 		sig = orm.DBSignature(creedsId)
@@ -136,8 +140,8 @@ def getCreedsLinks(infile, outfile):
 			linkDict[creedsId]['paea'] = None
 
 		# Get L1000
-		linkDict[creedsId]['l1000cds2'] = sig.post_to_cds2()
-
+		linkDict[creedsId]['l1000cds2-mimic'] = sig.post_to_cds2(aggravate=True)
+		linkDict[creedsId]['l1000cds2-reverse'] = sig.post_to_cds2(aggravate=False)
 
 		# Get enrichr
 		enrichrDict = sig.post_to_enrichr()
@@ -287,21 +291,21 @@ def getGseFiles(infile, outfile):
 	# Split in subsets
 	for idListSubset in np.array_split(idList, len(idList)/100):
 
-	    # Create comma-separated string
-	    idString = ','.join(idListSubset)
+		# Create comma-separated string
+		idString = ','.join(idListSubset)
 
-	    # Get eSummary URL
-	    eSummaryURL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=gds&id=%(idString)s' % locals()
+		# Get eSummary URL
+		eSummaryURL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=gds&id=%(idString)s' % locals()
 
-	    # Get root
-	    root = etree.fromstring(urllib2.urlopen(eSummaryURL).read())
-	    
-	    # Get data
-	    elemData = [[y.text for y in x.getchildren() if y.get('Name') in ['Accession', 'FTPLink', 'GPL']] for x in root]
-	    
-	    # Append
-	    linkList += elemData
-	    
+		# Get root
+		root = etree.fromstring(urllib2.urlopen(eSummaryURL).read())
+		
+		# Get data
+		elemData = [[y.text for y in x.getchildren() if y.get('Name') in ['Accession', 'FTPLink', 'GPL']] for x in root]
+		
+		# Append
+		linkList += elemData
+		
 	# Convert to dataframe
 	linkDataframe = pd.DataFrame(linkList, columns=['geo_accession', 'gpl', 'ftp_link'])
 
@@ -320,21 +324,14 @@ def getGseFiles(infile, outfile):
 #############################################
 
 @subdivide(getGseFiles,
-		   regex(r'(.*)/(.*)-geo_files.txt'),
-		   r'\1/split/\2-geo_files_*.txt',
-		   r'\1/split/\2-geo_files_')
+		   regex(r'(.*)/.*-geo_files.txt'),
+		   r'\1/*/*-files.txt',
+		   r'\1')
 
 def splitGeoFiles(infile, outfiles, outfileRoot):
 
 	# Read data
 	geoDataframe = pd.read_table(infile).set_index('platform', drop=False)
-
-	# Get directory name
-	outDir = os.path.dirname(outfileRoot)
-
-	# Create directory, if not exists
-	if not os.path.exists(outDir):
-		os.makedirs(outDir)
 
 	# Get counter
 	platformCounts = Counter(geoDataframe.index)
@@ -349,11 +346,99 @@ def splitGeoFiles(infile, outfiles, outfileRoot):
 		geoDataframeSubset = geoDataframe.loc[platform]
 
 		# get outfile
-		outfile = "{outfileRoot}{platform}.txt".format(**locals())
+		outfile = "{outfileRoot}/{platform}/{platform}-files.txt".format(**locals())
+
+		# Get directory name
+		outDir = os.path.dirname(outfile)
+
+		# Create directory, if not exists
+		if not os.path.exists(outDir):
+			os.makedirs(outDir)
 
 		# Write
 		geoDataframeSubset.to_csv(outfile, sep='\t', index=False)
 
+#############################################
+########## 3. Get links
+#############################################
+
+@transform(splitGeoFiles,
+		   regex(r'(.*)/(.*)/(.*)/.*-files.txt'),
+		   add_inputs(r'\1/platform_annotations/\3-annotation.txt'),
+		   r'\1/\2/\3/\3-links2.txt')
+
+def getClustergramLinks(infiles, outfile):
+
+	# Split infiles
+	geoFile, platformFile = infiles
+
+	# Read data
+	geoFileDataframe = pd.read_table(geoFile)
+
+	# Initialize result list
+	resultList = []
+
+	i = 0
+	n = len(geoFileDataframe.index)
+	organism = geoFile.split('/')[1]
+
+	# Loop through dataframe
+	for geo_accession, platform, matrix_link in geoFileDataframe.as_matrix():
+
+		i += 1
+
+		print 'Doing sample %(i)s/%(n)s for %(organism)s platform %(platform)s...' % locals()
+
+		try:
+
+			# Get response
+			response = urllib2.urlopen(matrix_link)
+
+			# Read file
+			geoData = [x.strip() for x in gzip.GzipFile(fileobj=StringIO.StringIO(response.read())).readlines()]
+
+			# If soft
+			if 'soft' in matrix_link:
+				clustergramDataframe = P.prepareSoftFile(geoData)
+			elif 'series' in matrix_link:
+				clustergramDataframe = P.prepareSeriesMatrix(geoData, platformFile)
+			else:
+				raise ValueError('Unknown type: ' + matrix_link)
+
+			# Zscore
+			clustergramDataframe = ((clustergramDataframe.T - clustergramDataframe.T.mean())/clustergramDataframe.T.std()).T
+
+			# Get filename
+			tempfile = os.path.basename(matrix_link)+'.txt'
+
+			# Save file
+			clustergramDataframe.to_csv(tempfile, sep='\t', index_label='Gene Symbol')
+
+			# Get link
+			upload_url = 'http://amp.pharm.mssm.edu/clustergrammer/matrix_upload/'
+
+			# Post request
+			r = requests.post(upload_url, files={'file': open(tempfile, 'rb')})
+
+			# Remove file
+			os.unlink(tempfile)
+
+			# Get link string
+			link = os.path.dirname(r.text)
+
+		except:
+
+			# Set error
+			link = None
+
+		# Add to dict
+		resultList.append(link)
+
+	# Convert to dataframe
+	geoFileDataframe['link'] = resultList
+
+	# Save
+	geoFileDataframe.to_csv(outfile, sep='\t', index_label='geo_accession')
 
 ##################################################
 ##################################################
