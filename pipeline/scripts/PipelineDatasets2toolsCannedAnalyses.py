@@ -31,7 +31,49 @@ import Support as S
 
 #######################################################
 #######################################################
-########## S1. GEO Matrix
+########## S1. CREEDS
+#######################################################
+#######################################################
+
+#############################################
+########## 1. Get CREEDS Description
+#############################################
+
+def generateDescriptions(cannedAnalysisDataframe):
+    metadata_list = []
+    for tool_name, metadata in cannedAnalysisDataframe[['tool_name', 'metadata']].as_matrix():
+        if tool_name == 'enrichr' or tool_name == 'paea':
+            if 'disease_name' in metadata.keys():
+                enrichment_signature_label = ' in ' + metadata['disease_name']
+            elif 'drug_name' in metadata.keys():
+                enrichment_signature_label = ' following ' + metadata['drug_name'] + ' treatment'
+            elif 'hs_gene_symbol' in metadata.keys() and 'pert_type' in metadata.keys():
+                enrichment_signature_label = ' following ' + ' '.join([metadata['hs_gene_symbol'], metadata['pert_type']]) 
+            else:
+                enrichment_signature_label = ''
+        else:
+            if 'disease_name' in metadata.keys():
+                l1000cds2_signature_label = metadata['disease_name']
+            elif 'drug_name' in metadata.keys():
+                l1000cds2_signature_label = metadata['drug_name'] + ' treatment'
+            elif 'hs_gene_symbol' in metadata.keys() and 'pert_type' in metadata.keys():
+                l1000cds2_signature_label = ' '.join([metadata['hs_gene_symbol'], metadata['pert_type']]) 
+            else:
+                l1000cds2_signature_label = ''
+        if 'cell_type' in metadata.keys():
+            cell_type_label = ' in ' + metadata['cell_type']
+        if tool_name == 'enrichr':
+            metadata['description'] = 'Enrichment analysis of genes ' + metadata['geneset'] + enrichment_signature_label + cell_type_label
+        elif tool_name == 'l1000cds2':
+            metadata['description'] = 'Query for small molecules which ' + ' '.join([metadata['direction'], l1000cds2_signature_label]) + ' gene expression signature' + cell_type_label
+        elif tool_name == 'paea':
+            metadata['description'] = 'Enrichment analysis of differential gene expression signature' + enrichment_signature_label + cell_type_label
+        metadata_list.append(json.dumps(metadata))
+    return metadata_list
+
+#######################################################
+#######################################################
+########## S2. GEO Matrix
 #######################################################
 #######################################################
 
@@ -55,7 +97,7 @@ def getMatrixLink(geo_accession, gpl, ftp_link):
 
 #######################################################
 #######################################################
-########## S2. GEO Clustergram - Soft
+########## S3. GEO Clustergram - Soft
 #######################################################
 #######################################################
 

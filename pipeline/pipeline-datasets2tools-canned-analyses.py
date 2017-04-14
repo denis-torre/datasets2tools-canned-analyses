@@ -140,13 +140,23 @@ def getCreedsLinks(infile, outfile):
 			linkDict[creedsId]['paea'] = None
 
 		# Get L1000
-		linkDict[creedsId]['l1000cds2-mimic'] = sig.post_to_cds2(aggravate=True)
-		linkDict[creedsId]['l1000cds2-reverse'] = sig.post_to_cds2(aggravate=False)
+		try:
+			linkDict[creedsId]['l1000cds2-mimic'] = sig.post_to_cds2(aggravate=True)
+		except:
+			linkDict[creedsId]['l1000cds2-mimic'] = None
+		try:
+			linkDict[creedsId]['l1000cds2-reverse'] = sig.post_to_cds2(aggravate=False)
+		except:
+			linkDict[creedsId]['l1000cds2-reverse'] = None
 
 		# Get enrichr
-		enrichrDict = sig.post_to_enrichr()
-		linkDict[creedsId]['enrichr-up'] = enrichrDict['up']
-		linkDict[creedsId]['enrichr-down'] = enrichrDict['down']
+		try:
+			enrichrDict = sig.post_to_enrichr()
+			linkDict[creedsId]['enrichr-up'] = enrichrDict['up']
+			linkDict[creedsId]['enrichr-down'] = enrichrDict['down']
+		except:
+			linkDict[creedsId]['enrichr-up'] = None
+			linkDict[creedsId]['enrichr-down'] = None
 
 		# Convert to dataframe
 		linkDataframe = pd.DataFrame(linkDict).T
@@ -178,11 +188,12 @@ def makeCreedsCannedAnalyses(infiles, outfile):
 
 	# Read dataframes
 	linkDataframe = pd.read_table(linkFile, index_col='creeds_id')
-	metadataDataframe = pd.read_csv(metadataFile, index_col='id')
+	metadataDataframe = pd.read_csv(metadataFile).rename(columns={'id': 'creeds_id'}).set_index('creeds_id', drop=False)
 
 	# Process dataframes
 	linkDataframe['tool'] = [x.split('-')[0] if '-' in x else x for x in linkDataframe['analysis']]
-	linkDataframe['geneset'] = [x.split('-')[1]+'regulated' if '-' in x else 'combined' for x in linkDataframe['analysis']]
+	linkDataframe['geneset'] = [x.split('-')[1]+'regulated' if 'enrichr-' in x else np.nan for x in linkDataframe['analysis']]
+	linkDataframe['direction'] = [x.split('-')[1] if 'l1000cds2-' in x else np.nan for x in linkDataframe['analysis']]
 	linkDataframe['top_genes'] = [str(500) if 'enrichr' in x else np.nan for x in linkDataframe['analysis']]
 	metadataDataframe['ctrl_ids'] = [x.replace('|', ', ') for x in metadataDataframe['ctrl_ids']]
 	metadataDataframe['pert_ids'] = [x.replace('|', ', ') for x in metadataDataframe['pert_ids']]
@@ -192,13 +203,16 @@ def makeCreedsCannedAnalyses(infiles, outfile):
 
 	# Add metadata column
 	mergedMetadataDataframe = mergedDataframe.drop(['geo_id', 'platform', 'version', 'link', 'analysis', 'tool'], axis=1)
-	mergedDataframe['metadata'] = [json.dumps(dict(rowData.dropna())) for index, rowData in mergedMetadataDataframe.iterrows()]
+	mergedDataframe['metadata'] = [dict(rowData.dropna()) for index, rowData in mergedMetadataDataframe.iterrows()]
 
 	# Filter dataframe
-	cannedAnalysisDataframe = mergedDataframe[['geo_id', 'tool', 'link', 'metadata']].reset_index(drop=True)
+	cannedAnalysisDataframe = mergedDataframe[['geo_id', 'tool', 'link', 'metadata']].reset_index(drop=True).rename(columns={'geo_id': 'dataset_accession', 'tool': 'tool_name', 'link': 'canned_analysis_url'})
+
+	# Add descriptions
+	cannedAnalysisDataframe['metadata'] = P.generateDescriptions(cannedAnalysisDataframe)
 
 	# Save file
-	cannedAnalysisDataframe.to_csv(outfile, sep='\t', index_label='index')
+	cannedAnalysisDataframe.to_csv(outfile, sep='\t', index=False)
 
 #################################################################
 #################################################################
@@ -365,7 +379,7 @@ def splitGeoFiles(infile, outfiles, outfileRoot):
 @transform(splitGeoFiles,
 		   regex(r'(.*)/(.*)/(.*)/.*-files.txt'),
 		   add_inputs(r'\1/platform_annotations/\3-annotation.txt'),
-		   r'\1/\2/\3/\3-links2.txt')
+		   r'\1/\2/\3/\3-links.txt')
 
 def getClustergramLinks(infiles, outfile):
 
