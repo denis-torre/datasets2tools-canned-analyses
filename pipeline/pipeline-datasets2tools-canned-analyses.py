@@ -34,7 +34,8 @@ import orm
 #############################################
 ##### 1. Variables #####
 metadataFileNames = ['single_gene_perturbations-v1.0.csv', 'disease_signatures-v1.0.csv', 'single_drug_perturbations-v1.0.csv']#, 'single_drug_perturbations-DM.csv', 'single_gene_perturbations-p1.0.csv', 'disease_signatures-p1.0.csv', 'single_drug_perturbations-p1.0.csv']
-dbFile = 'g2e/db.json'
+dbFile = 'data/db.json'
+toolSnapshots = {'enrichr': {'up': [], 'dn': []}, 'l1000cds2': {'mimic': [], 'reverse': []}, 'paea': []}
 
 ##### 2. R Connection #####
 rSource = 'pipeline/scripts/pipeline-datasets2tools-canned-analyses.R'
