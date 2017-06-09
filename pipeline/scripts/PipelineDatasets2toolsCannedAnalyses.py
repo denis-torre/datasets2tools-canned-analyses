@@ -36,6 +36,101 @@ import Support as S
 #######################################################
 
 #############################################
+########## 1. Get Analysis Title
+#############################################
+
+def getAnalysisTitle(toolName, metadataDict):
+    
+    # Tool
+    if toolName == 'enrichr':
+        title = 'Enrichment analysis of genes ' + metadataDict['geneset']
+        if 'disease_name' in metadataDict.keys():
+            title += ' in ' + metadataDict['disease_name']
+        elif 'drug_name' in metadataDict.keys():
+            title += ' following ' + metadataDict['drug_name'] + ' treatment'
+        elif 'hs_gene_symbol' in metadataDict.keys():
+            perturbationLabel = metadataDict['pert_type'] if 'pert_type' in metadataDict.keys() else 'perturbation'
+            title += ' in  ' + metadataDict['hs_gene_symbol'] + ' ' + perturbationLabel
+    elif toolName == 'paea':
+        title = 'Enrichment analysis of genes dysregulated '
+        if 'disease_name' in metadataDict.keys():
+            title += ' in ' + metadataDict['disease_name']
+        elif 'drug_name' in metadataDict.keys():
+            title += ' following ' + metadataDict['drug_name'] + ' treatment'
+        elif 'hs_gene_symbol' in metadataDict.keys():
+            perturbationLabel = metadataDict['pert_type'] if 'pert_type' in metadataDict.keys() else 'perturbation'
+            title += ' in  ' + metadataDict['hs_gene_symbol'] + ' ' + perturbationLabel
+    elif toolName == 'l1000cds2':
+        title = 'Small molecules which ' + metadataDict['direction'] + ' '
+        if 'disease_name' in metadataDict.keys():
+            title += metadataDict['disease_name']
+        elif 'drug_name' in metadataDict.keys():
+            title += metadataDict['drug_name'] + ' treatment'
+        elif 'hs_gene_symbol' in metadataDict.keys():
+            perturbationLabel = metadataDict['pert_type'] if 'pert_type' in metadataDict.keys() else 'perturbation'
+            title += metadataDict['hs_gene_symbol'] + ' ' + perturbationLabel
+    elif toolName == 'genemania':
+        title = 'Interaction network and enrichment analysis of genes ' + metadataDict['geneset']
+        if 'disease_name' in metadataDict.keys():
+            title += ' in ' + metadataDict['disease_name']
+        elif 'drug_name' in metadataDict.keys():
+            title += ' following ' + metadataDict['drug_name'] + ' treatment'
+        elif 'hs_gene_symbol' in metadataDict.keys():
+            perturbationLabel = metadataDict['pert_type'] if 'pert_type' in metadataDict.keys() else 'perturbation'
+            title += ' in ' + metadataDict['hs_gene_symbol'] + ' ' + perturbationLabel
+
+    return title
+
+#############################################
+########## 2. Get Analysis Description
+#############################################
+
+def getAnalysisDescription(toolName, metadataDict):
+
+    # Cell type
+    celltypeLabel = ' '.join([' in the ', metadataDict['cell_type'], ' cell type.']) if 'cell_type' in metadataDict.keys() else '.'
+
+    # Tool
+    if toolName == 'enrichr':
+        title = 'An enrichment analysis was performed on the top 500 most ' + metadataDict['geneset'] + ' genes identified by applying the Characteristic Direction method comparing gene expression between '
+        if 'disease_name' in metadataDict.keys():
+            title += 'cells affected by ' + metadataDict['disease_name'] + ' and healthy control cells' + celltypeLabel
+        elif 'drug_name' in metadataDict.keys():
+            title += metadataDict['drug_name'] + ' treated cells and untreated control cells' + celltypeLabel
+        elif 'hs_gene_symbol' in metadataDict.keys():
+            perturbationLabel = metadataDict['pert_type'] if 'pert_type' in metadataDict.keys() else 'perturbation'
+            title += metadataDict['hs_gene_symbol'] + ' ' + perturbationLabel + ' cells and control cells' + celltypeLabel
+    elif toolName == 'paea':
+        title = 'An enrichment analysis was performed on the top most dyresgulated genes determined by applying the principal angle method to compare gene expression between '
+        if 'disease_name' in metadataDict.keys():
+            title += 'cells affected by ' + metadataDict['disease_name'] + ' and healthy control cells' + celltypeLabel
+        elif 'drug_name' in metadataDict.keys():
+            title += metadataDict['drug_name'] + ' treated cells and untreated control cells' + celltypeLabel
+        elif 'hs_gene_symbol' in metadataDict.keys():
+            perturbationLabel = metadataDict['pert_type'] if 'pert_type' in metadataDict.keys() else 'perturbation'
+            title += metadataDict['hs_gene_symbol'] + ' ' + perturbationLabel + ' cells and control cells' + celltypeLabel
+    elif toolName == 'l1000cds2':
+        title = 'The L1000 database was queried in order to identify small molecule perturbations which ' + metadataDict['direction'] + ' the '
+        if 'disease_name' in metadataDict.keys():
+            title += metadataDict['disease_name'] + ' gene expression signature' + celltypeLabel
+        elif 'drug_name' in metadataDict.keys():
+            title += ' gene expression signature induced by ' + metadataDict['drug_name'] + ' treatment' + celltypeLabel
+        elif 'hs_gene_symbol' in metadataDict.keys():
+            perturbationLabel = metadataDict['pert_type'] if 'pert_type' in metadataDict.keys() else 'perturbation'
+            title += ' gene expression signature induced by ' + metadataDict['hs_gene_symbol'] + ' ' + perturbationLabel + celltypeLabel
+    elif toolName == 'genemania':
+        title = 'The analysis explores the gene interaction network and pathway enrichment of the top 50 most ' + metadataDict['geneset'] + ' genes identified by applying the Characteristic Direction method comparing gene expression between '
+        if 'disease_name' in metadataDict.keys():
+            title += 'cells affected by ' + metadataDict['disease_name'] + ' and healthy control cells' + celltypeLabel
+        elif 'drug_name' in metadataDict.keys():
+            title += metadataDict['drug_name'] + ' treated cells and untreated control cells' + celltypeLabel
+        elif 'hs_gene_symbol' in metadataDict.keys():
+            perturbationLabel = metadataDict['pert_type'] if 'pert_type' in metadataDict.keys() else 'perturbation'
+            title += metadataDict['hs_gene_symbol'] + ' ' + perturbationLabel + ' cells and control cells' + celltypeLabel
+
+    return title
+
+#############################################
 ########## 1. Get CREEDS Description
 #############################################
 
