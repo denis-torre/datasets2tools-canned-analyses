@@ -1,4 +1,4 @@
-import gzip, urllib2
+import gzip, urllib2, os
 import pandas as pd
 import numpy as np
 from StringIO import StringIO
@@ -30,80 +30,59 @@ class SeriesMatrix:
             # Read data
             self.data = f.read()
 
+            # Get platform
+            self.platform_accession = os.path.basename(matrix_url).split('_')[1]
+
 #######################################################
 ########## 2. Get Expression ##########################
 #######################################################
 
     def get_expression_data(self, n_genes=500):
 
-        # Get expression dataframe
-        expression_dataframe = pd.DataFrame([x.split('\t') for x in self.data.split('\n')[1:] if '!' not in x])
+        # Check platform
+        if self.platform_accession in ['GPL11154', 'GPL13112', 'GPL16791', 'GPL17021']:
 
-        # Fix axis names
-        expression_dataframe = expression_dataframe.rename(columns=expression_dataframe.iloc[0]).drop(0).set_index('ID_REF').fillna(0).astype('int')
+            # Get expression dataframe
+            expression_dataframe = pd.DataFrame([x.split('\t') for x in self.data.split('\n')[1:] if '!' not in x])
 
-        # Get variable genes
-        top_variance_genes = expression_dataframe.apply(np.var, 1).sort_values(ascending=False).index.tolist()[:n_genes]
+            # Fix axis names
+            expression_dataframe = expression_dataframe.rename(columns=expression_dataframe.iloc[0]).drop(0).set_index('ID_REF').fillna(0).astype('int')
 
-        # Filter dataframe
-        expression_dataframe = expression_dataframe.loc[top_variance_genes]
+            # Get variable genes
+            top_variance_genes = expression_dataframe.apply(np.var, 1).sort_values(ascending=False).index.tolist()[:n_genes]
 
-        # Z-score
-        self.expression_dataframe = ((expression_dataframe.T - expression_dataframe.T.mean())/expression_dataframe.T.std()).T
+            # Filter dataframe
+            expression_dataframe = expression_dataframe.loc[top_variance_genes]
+
+            # Z-score
+            self.expression_dataframe = ((expression_dataframe.T - expression_dataframe.T.mean())/expression_dataframe.T.std()).T
 
 #######################################################
 ########## 3. Get Metadata ############################
 #######################################################
 
-    def get_sample_metadata(self, terms=['!Sample_title', '!Sample_source_name_ch1', '!Sample_characteristics_ch1']):
+    def get_sample_metadata(self):
 
         # Get metadata dataframe
         metadata_dataframe = pd.DataFrame([x.split('\t') for x in self.data.split('\n')[1:] if any(y in x for y in ['!Sample', '!^SAMPLE'])]).set_index(0)
 
-        # Fix column names
-        metadata_dataframe = metadata_dataframe.rename(columns=metadata_dataframe.loc['!^SAMPLE']).drop('!^SAMPLE').drop(None, axis=1)
+        # Get title conversion
+        sample_title_dict = {sample_accession: '{sample_title} ({sample_accession})'.format(**locals()) for sample_accession, sample_title in metadata_dataframe.loc[['!^SAMPLE', '!Sample_title']].T.as_matrix() if sample_accession}
 
-        # Get rows of interest
-        metadata_rows = set(metadata_dataframe.index).intersection(set(terms))
+        # Get metadata dict
+        metadata_dict = [{term_string.split(': ')[0]: term_string.split(': ')[1] for term_string in term_list} for term_list in np.array_split(metadata_dataframe.loc['!Sample_characteristics_ch1'].dropna().tolist(), len(sample_title_dict.keys()))]
 
-        # Get subset
-        metadata_dataframe = metadata_dataframe.loc[metadata_rows, self.expression_dataframe.columns.tolist()]
+        # Create dict
+        sample_metadata_dataframe = pd.DataFrame({sample_title_dict[sample_accession]: metadata_dict for sample_accession, metadata_dict in zip(metadata_dataframe.loc['!^SAMPLE'], metadata_dict)})
 
-        # Cats list
-        cats_list = []
+        # Rename
+        self.expression_dataframe = self.expression_dataframe.rename(columns=sample_title_dict)
 
-        # Loop through dataframe
-        for catName, rowData in metadata_dataframe.iterrows():
-            
-            # Define dict
-            sample_cats_dict = {}
-          
-            # Reindex
-            metadata_dataframe_reindexed = metadata_dataframe.loc[catName].to_frame().reset_index().set_index(catName)
-             
-            # Get unique category values
-            catValues = set(rowData.values)
-             
-            # Loop through values
-            for catValue in catValues:
-                
-                # Get sample accessions
-                sample_accessions = metadata_dataframe_reindexed.loc[catValue, 'index']
-                
-                # Convert to list
-                sample_accessions = [sample_accessions] if type(sample_accessions) == str else list(sample_accessions)
-                
-                # Add
-                sample_cats_dict[catValue] = sample_accessions
-                
-            # Append
-            cats_list.append({'title': catName, 'cats': sample_cats_dict})
-
-        # Add to self
-        self.sample_cats = cats_list
+        # Add cats
+        self.sample_cats = [{'title': index, 'cats': {value: rowData[rowData==value].index.tolist() for value in set(rowData.values)}} for index, rowData in sample_metadata_dataframe.iterrows()]
 
 #######################################################
-########## 4. Get Metadata ############################
+########## 4. Get JSON ################################
 #######################################################
 
     def get_clustergrammer_json(self, outfile):
@@ -115,13 +94,19 @@ class SeriesMatrix:
         net.load_df(self.expression_dataframe)
 
         # Add categories
-        net.add_cats('col', self.sample_cats)
+        try:
+            net.add_cats('col', self.sample_cats)
+        except:
+            pass
 
-        # calculate clustering using default parameters
-        net.cluster()
+        try:
+            # calculate clustering using default parameters
+            net.cluster()
 
-        # save visualization JSON to file for use by front end
-        net.write_json_to_file('viz', outfile)
+            # save visualization JSON to file for use by front end
+            net.write_json_to_file('viz', outfile)
+        except:
+            os.system('touch {outfile}'.format(**locals()))
 
 
 #######################################################

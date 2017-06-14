@@ -5,3 +5,4 @@ g2e
 *.sqlite
 *.dir
 *.pyc
+data/aws.json

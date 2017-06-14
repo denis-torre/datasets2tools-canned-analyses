@@ -12,7 +12,7 @@
 #############################################
 ##### 1. Python modules #####
 from ruffus import *
-import sys, os, glob, json, urllib2, xmltodict, gzip, StringIO, requests
+import sys, os, glob, json, urllib2, xmltodict, gzip, StringIO, requests, tinys3
 import pandas as pd
 import rpy2.robjects as robjects
 # import pandas.rpy.common as com
@@ -38,6 +38,7 @@ from SeriesMatrix import *
 metadataFileNames = ['single_gene_perturbations-v1.0.csv', 'disease_signatures-v1.0.csv', 'single_drug_perturbations-v1.0.csv']#, 'single_drug_perturbations-DM.csv', 'single_gene_perturbations-p1.0.csv', 'disease_signatures-p1.0.csv', 'single_drug_perturbations-p1.0.csv']
 dbFile = 'data/db.json'
 screenshotFile = 'data/screenshots/screenshots.txt'
+awsFile = 'data/aws.json'
 
 ##### 2. R Connection #####
 rSource = 'pipeline/scripts/pipeline-datasets2tools-canned-analyses.R'
@@ -52,7 +53,7 @@ r.source(rSource)
 
 #######################################################
 #######################################################
-########## S1. Download Data
+########## S1. CREEDS
 #######################################################
 #######################################################
 
@@ -96,14 +97,8 @@ def getCreedsData(infile, outfile):
 	# Prepare statement
 	os.system('wget -P %(outDir)s %(metadataFileLink)s' % locals())
 
-#######################################################
-#######################################################
-########## S2. GEO2Enrichr
-#######################################################
-#######################################################
-
 #############################################
-########## 1. Submit to G2E
+########## 2. Submit to G2E
 #############################################
 
 @transform(getCreedsData,
@@ -173,11 +168,9 @@ def getCreedsLinks(infile, outfile):
 	# Save file
 	linkDataframeMelt.to_csv(outfile, sep='\t', index=False)
 
-#######################################################
-#######################################################
-########## S2. Canned Analyses
-#######################################################
-#######################################################
+#############################################
+########## 3. Make Canned Analyses
+#############################################
 
 @transform(getCreedsLinks,
 		   regex(r'(.*)/.*/(.*)-links.txt'),
@@ -216,301 +209,137 @@ def makeCreedsCannedAnalyses(infiles, outfile):
 	mergedDataframe['canned_analysis_title'] = [P.getAnalysisTitle(tool_name, metadata) for tool_name, metadata in mergedDataframe[['tool_name', 'metadata']].as_matrix()]
 	mergedDataframe['canned_analysis_description'] = [P.getAnalysisDescription(tool_name, metadata) for tool_name, metadata in mergedDataframe[['tool_name', 'metadata']].as_matrix()]
 
-	# JSON metadata
-	mergedDataframe['metadata'] = [json.dumps(x) for x in mergedDataframe['metadata']]
-
 	# Filter dataframe
-	cannedAnalysisDataframe = mergedDataframe[['dataset_accession', 'tool_name', 'canned_analysis_title', 'canned_analysis_description', 'canned_analysis_url', 'canned_analysis_preview_url', 'metadata']].reset_index(drop=True)
+	cannedAnalysisDataframe = mergedDataframe[['dataset_accession', 'tool_name', 'canned_analysis_title', 'canned_analysis_description', 'canned_analysis_url', 'canned_analysis_preview_url', 'metadata']].reset_index(drop=True).dropna()
+
+	# Fix metadata
+	cannedAnalysisDataframe['metadata'] = [json.dumps(x) for x in cannedAnalysisDataframe['metadata']]
+
+	# Add date
+	cannedAnalysisDataframe['date'] = '2017-05-22'
 
 	# Save file
 	cannedAnalysisDataframe.to_csv(outfile, sep='\t', index=False)
 
-#################################################################
-#################################################################
-############### 2. ARCHS4 #######################################
-#################################################################
-#################################################################
-
 #######################################################
 #######################################################
-########## S1. ARCHS4
+########## S2. ARCHS4
 #######################################################
 #######################################################
 
 #############################################
-########## 1. Read links
+########## 1. Get JSON
 #############################################
 
-@follows(mkdir('f2-archs.dir'))
+def archsJobs():
 
-@files(None,
-	   'f2-archs.dir/archs-links.txt')
+	# Read link dataframe
+	with open('f2-archs4.dir/gse_platform_ids.txt', 'r') as openfile:
 
-def getArchsLinks(infile, outfile):
+		# Read lines
+		outfiles = ['f2-archs4.dir/json/'+x.split('_series')[0]+'.json' for x in openfile.readlines()]
 
-	# Read XML
-	xmlString = urllib2.urlopen('https://s3.amazonaws.com/mssm-seq-series').read()
+		# Get length
+		n = len(outfiles)
+		i = 0
 
-	# Convert to dict
-	xmlDict = xmltodict.parse(xmlString)
+		# Loop through outfiles
+		for outfile in outfiles:
 
-	# Get GEO IDs
-	geoIds = [str(x['Key'].split('_')[0]) for x in xmlDict['ListBucketResult']['Contents']]
+			# Print
+			i += 1
+			print 'Doing file {i}/{n}...'.format(**locals())
 
-	# Get data
-	linkDict = {x: json.loads(urllib2.urlopen('http://amp.pharm.mssm.edu/awsscheduler/getGSEmatrix.php?gse=%(x)s' % locals()).read()) for x in geoIds}
+			# Yield
+			yield [None, outfile]
 
-	# Convert to dataframe
-	linkDataframe = pd.DataFrame(linkDict).T
+@files(archsJobs)
 
-	# Write file
-	linkDataframe.to_csv(outfile, sep='\t', index=False)
+def getArchsJson(infile, outfile):
 
-#################################################################
-#################################################################
-############### 3. GEO ##########################################
-#################################################################
-#################################################################
+	try:
 
-#######################################################
-#######################################################
-########## S1. Get data
-#######################################################
-#######################################################
+		# Get matrix URL
+		matrixUrl = 'https://s3.amazonaws.com/mssm-seq-series-platform/'+os.path.basename(outfile)[:-len('.json')]+'_series_matrix.txt.gz'
 
-#############################################
-########## 1. Get GSE
-#############################################
+		# Initialize matrix
+		seriesMatrix = SeriesMatrix(matrixUrl)
 
-def gseJobs():
+		# Get expression data
+		seriesMatrix.get_expression_data()
 
-	for organism in ['human', 'mouse']:
+		# Get sample metadata
+		seriesMatrix.get_sample_metadata()
 
-		outfile = 'f3-geo.dir/%(organism)s/%(organism)s-geo_files.txt' % locals()
+		# Get JSON
+		seriesMatrix.get_clustergrammer_json(outfile)
 
-		dirName = os.path.dirname(outfile)
-
-		if not os.path.exists(dirName):
-			os.makedirs(dirName)
-
-		yield [None, outfile]
-
-@follows(mkdir('f3-geo.dir'))
-
-@files(gseJobs)
-
-def getGseFiles(infile, outfile):
-
-	# Get organism
-	organism = os.path.basename(outfile).split('-')[0]
-
-	# Get eSearch URL
-	eSearchURL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=gds&term=(Expression%20profiling%20by%20array%5BDataSet%20Type%5D)%20AND%20' + organism + '%5BOrganism%5D&retMax=100000'
-
-	# Read data
-	idList = xmltodict.parse(urllib2.urlopen(eSearchURL).read())['eSearchResult']['IdList']['Id']
-
-	# Initialize result
-	linkList = []
-
-	# Split in subsets
-	for idListSubset in np.array_split(idList, len(idList)/100):
-
-		# Create comma-separated string
-		idString = ','.join(idListSubset)
-
-		# Get eSummary URL
-		eSummaryURL = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=gds&id=%(idString)s' % locals()
-
-		# Get root
-		root = etree.fromstring(urllib2.urlopen(eSummaryURL).read())
+	except:
 		
-		# Get data
-		elemData = [[y.text for y in x.getchildren() if y.get('Name') in ['Accession', 'FTPLink', 'GPL']] for x in root]
-		
-		# Append
-		linkList += elemData
-		
-	# Convert to dataframe
-	linkDataframe = pd.DataFrame(linkList, columns=['geo_accession', 'gpl', 'ftp_link'])
-
-	# Get result list
-	resultList = [P.getMatrixLink(geo_accession, gpl, ftp_link) for geo_accession, gpl, ftp_link in linkDataframe[['geo_accession', 'gpl', 'ftp_link']].as_matrix() if gpl != None]
-	resultList = [item for sublist in resultList for item in sublist]
-
-	# Get link dataframe
-	resultDataframe = pd.DataFrame(resultList, columns=['geo_accession', 'platform' , 'matrix_link'])
-
-	# Write
-	resultDataframe.to_csv(outfile, sep='\t', index=False)
+		# Create file
+		os.system('touch {outfile}'.format(**locals()))
 
 #############################################
-########## 2. Split data
+########## 2. Upload JSON
 #############################################
 
-@subdivide(getGseFiles,
-		   regex(r'(.*)/.*-geo_files.txt'),
-		   r'\1/*/*-files.txt',
-		   r'\1')
+# @follows(getArchsJson)
 
-def splitGeoFiles(infile, outfiles, outfileRoot):
+@transform('f2-archs4.dir/json',
+		   suffix(''),
+		   add_inputs(awsFile),
+		   '_upload.txt')
 
-	# Read data
-	geoDataframe = pd.read_table(infile).set_index('platform', drop=False)
-
-	# Get counter
-	platformCounts = Counter(geoDataframe.index)
-
-	# Select platforms
-	platforms = [platform for platform, count in platformCounts.iteritems() if count > 500]
-
-	# Loop
-	for platform in platforms:
-
-		# Get subset
-		geoDataframeSubset = geoDataframe.loc[platform]
-
-		# get outfile
-		outfile = "{outfileRoot}/{platform}/{platform}-files.txt".format(**locals())
-
-		# Get directory name
-		outDir = os.path.dirname(outfile)
-
-		# Create directory, if not exists
-		if not os.path.exists(outDir):
-			os.makedirs(outDir)
-
-		# Write
-		geoDataframeSubset.to_csv(outfile, sep='\t', index=False)
-
-#############################################
-########## 3. Get links
-#############################################
-
-@transform(splitGeoFiles,
-		   regex(r'(.*)/(.*)/(.*)/.*-files.txt'),
-		   add_inputs(r'\1/platform_annotations/\3-annotation.txt'),
-		   r'\1/\2/\3/\3-links.txt')
-
-def getClustergramLinks(infiles, outfile):
+def uploadJsonFiles(infiles, outfile):
 
 	# Split infiles
-	geoFile, platformFile = infiles
+	jsonDir, awsFile = infiles
 
 	# Read data
-	geoFileDataframe = pd.read_table(geoFile)
+	with open(awsFile, 'r') as openfile:
+		aws_dict = json.loads(openfile.read())
 
-	# Initialize result list
-	resultList = []
-
-	i = 0
-	n = len(geoFileDataframe.index)
-	organism = geoFile.split('/')[1]
-
-	# Loop through dataframe
-	for geo_accession, platform, matrix_link in geoFileDataframe.as_matrix():
-
-		i += 1
-
-		print 'Doing sample %(i)s/%(n)s for %(organism)s platform %(platform)s...' % locals()
-
-		try:
-
-			# Get response
-			response = urllib2.urlopen(matrix_link)
-
-			# Read file
-			geoData = [x.strip() for x in gzip.GzipFile(fileobj=StringIO.StringIO(response.read())).readlines()]
-
-			# If soft
-			if 'soft' in matrix_link:
-				clustergramDataframe = P.prepareSoftFile(geoData)
-			elif 'series' in matrix_link:
-				clustergramDataframe = P.prepareSeriesMatrix(geoData, platformFile)
-			else:
-				raise ValueError('Unknown type: ' + matrix_link)
-
-			# Zscore
-			clustergramDataframe = ((clustergramDataframe.T - clustergramDataframe.T.mean())/clustergramDataframe.T.std()).T
-
-			# Get filename
-			tempfile = os.path.basename(matrix_link)+'.txt'
-
-			# Save file
-			clustergramDataframe.to_csv(tempfile, sep='\t', index_label='Gene Symbol')
-
-			# Get link
-			upload_url = 'http://amp.pharm.mssm.edu/clustergrammer/matrix_upload/'
-
-			# Post request
-			r = requests.post(upload_url, files={'file': open(tempfile, 'rb')})
-
-			# Remove file
-			os.unlink(tempfile)
-
-			# Get link string
-			link = os.path.dirname(r.text)
-
-		except:
-
-			# Set error
-			link = None
-
-		# Add to dict
-		resultList.append(link)
-
-	# Convert to dataframe
-	geoFileDataframe['link'] = resultList
-
-	# Save
-	geoFileDataframe.to_csv(outfile, sep='\t', index_label='geo_accession')
-
-#################################################################
-#################################################################
-############### 4. LINCS ########################################
-#################################################################
-#################################################################
-
-#######################################################
-#######################################################
-########## S1. Process Data
-#######################################################
-#######################################################
-
-#############################################
-########## 1. Process analyses
-#############################################
-
-@follows(mkdir('f4-lincs.dir'))
-
-@transform('f4-lincs.dir/lincs_canned_analyses.csv',
-		   suffix('.csv'),
-		   '.txt')
-
-def processLincsAnalyses(infile, outfile):
+	# Define S3 function
+	def uploadS3(file, key, bucket):
+		conn = tinys3.Connection(aws_dict['awsid'], aws_dict['awskey'], tls=True)
+		f = open(file,'rb')
+		conn.upload(key, f, bucket)
 	
-	# Read dataframe
-	analysisDataframe = pd.read_csv(infile).set_index('dataset_accessions_list', drop=False)
+	# Define basename function
+	def basename(p):
+		temp = p.split("/")
+		return temp[len(temp)-1]
 
-	# Get subset
-	cannedAnalysisDataframe = analysisDataframe.rename(columns={'title': 'canned_analysis_title', 'dataset_accessions_list': 'dataset_accession', 'ca_image_url': 'canned_analysis_preview_url'}).loc['LDG-1285', ['dataset_accession', 'tool_name', 'canned_analysis_title', 'canned_analysis_description', 'canned_analysis_url', 'canned_analysis_preview_url']]
+	# Upload
+	os.chdir(os.path.dirname(jsonDir))
+	files = os.listdir("json")
+	for f in files:
+		uploadS3("json/"+f, basename(f), "mssm-seq-series-json")
+		
+	# Create file
+	os.system('cd ..; touch {outfile}'.format(**locals()))
 
-	# Get metadata
-	cannedAnalysisDataframe['metadata'] = [json.dumps({'cell_line': 'A375, A549, MCF7, NPC, PC3', 'perturbation_type': 'epigenetic compound'}),
-										   json.dumps({'cell_line': 'MCF7, NPC', 'perturbation_type': 'kinase inhibitors'})]
+#############################################
+########## 3. Make Canned Analyses
+#############################################
 
-	# Save
-	cannedAnalysisDataframe.to_csv(outfile, sep='\t', index=False)
+@merge(glob.glob('f2-archs4.dir/json/*'),#getArchsJson,
+	   'f2-archs4.dir/archs4-canned_analyses.txt')
 
-#################################################################
-#################################################################
-############### 5. GeneMANIA ####################################
-#################################################################
-#################################################################
+def makeArchsCannedAnalyses(infiles, outfile):
+
+	# Get analysis dict
+	canned_analysis_dict = [{'dataset_accession': os.path.basename(x).split('_')[0], 'tool_name': 'archs4', 'canned_analysis_url':'http://amp.pharm.mssm.edu/datasets2tools/analysis/archs4?q='+os.path.basename(x)[:-len('.json')], 'canned_analysis_title': 'Interactive heatmap visualization of RNA-seq dataset '+os.path.basename(x).split('_')[0], 'canned_analysis_description': 'Highly interactive web-based heatmap visualization of the top 500 most variable genes in the '+os.path.basename(x).split('_')[0]+' RNA-seq dataset, as processed by ARCHS4.', 'canned_analysis_preview_url':'https://github.com/denis-torre/images/blob/master/archs4/'+str(randint(1, 5))+'.png?raw=true', 'metadata': json.dumps({'platform': os.path.basename(x).split('_')[1][:-len('.json')], 'Genes': '500', 'Gene Rank Method': 'Variance', 'Data Normalization Method': 'Z-score'})} for x in infiles]
+
+	# Get dataframe
+	canned_analysis_dataframe = pd.DataFrame(canned_analysis_dict)
+
+	# Write
+	canned_analysis_dataframe.to_csv(outfile, sep='\t', index=False)
 
 #######################################################
 #######################################################
-########## S1. Create Analyses
+########## S3. GeneMANIA
 #######################################################
 #######################################################
 
@@ -518,11 +347,11 @@ def processLincsAnalyses(infile, outfile):
 ########## 1. Process analyses
 #############################################
 
-@follows(mkdir('f5-genemania.dir'))
+@follows(mkdir('f3-genemania.dir'))
 
 @transform(getCreedsData,
 		   regex(r'.*/(.*).csv'),
-		   r'f5-genemania.dir/\1-genemania_links.txt')
+		   r'f3-genemania.dir/\1-genemania_links.txt')
 
 def getGenemaniaLinks(infile, outfile):
 
@@ -610,80 +439,43 @@ def makeGenemaniaCannedAnalyses(infiles, outfile):
 	# Save file
 	cannedAnalysisDataframe.to_csv(outfile, sep='\t', index=False)
 
+
 #################################################################
 #################################################################
-############### 6. ARCHS4 #######################################
+############### 4. LINCS ########################################
 #################################################################
 #################################################################
 
 #######################################################
 #######################################################
-########## S1. Create Analyses
+########## S1. Process Data
 #######################################################
 #######################################################
 
 #############################################
-########## 1. Get links
+########## 1. Process analyses
 #############################################
 
-@follows(mkdir('f6-archs4.dir'))
+@follows(mkdir('f4-lincs.dir'))
 
-@originate('f6-archs4.dir/archs4-matrix_links.txt')
+@transform('f4-lincs.dir/lincs_canned_analyses.csv',
+		   suffix('.csv'),
+		   '.txt')
 
-def getMatrixLinks(outfile):
+def processLincsAnalyses(infile, outfile):
+	
+	# Read dataframe
+	analysisDataframe = pd.read_csv(infile).set_index('dataset_accessions_list', drop=False)
 
-	# Get XML
-	xmlDict = xmltodict.parse(urllib2.urlopen('https://s3.amazonaws.com/mssm-seq-series').read())
+	# Get subset
+	cannedAnalysisDataframe = analysisDataframe.rename(columns={'title': 'canned_analysis_title', 'dataset_accessions_list': 'dataset_accession', 'ca_image_url': 'canned_analysis_preview_url'}).loc['LDG-1285', ['dataset_accession', 'tool_name', 'canned_analysis_title', 'canned_analysis_description', 'canned_analysis_url', 'canned_analysis_preview_url']]
 
-	# Get accessions
-	geoAccessions = [x['Key'].split('_')[0] for x in xmlDict['ListBucketResult']['Contents']]
-
-	# Get dataframe
-	linkDataframe = pd.DataFrame({'dataset_accession': geoAccessions,
-	                              'series_matrix_url': ['https://s3.amazonaws.com/mssm-seq-series/{x}_series_matrix.txt.gz'.format(**locals()) for x in geoAccessions]})
+	# Get metadata
+	cannedAnalysisDataframe['metadata'] = [json.dumps({'cell_line': 'A375, A549, MCF7, NPC, PC3', 'perturbation_type': 'epigenetic compound'}),
+										   json.dumps({'cell_line': 'MCF7, NPC', 'perturbation_type': 'kinase inhibitors'})]
 
 	# Save
-	linkDataframe.to_csv(outfile, sep='\t', index=False)
-
-#############################################
-########## 2. Get JSON
-#############################################
-
-# def vizJobs():
-
-	# Read link dataframe
-	# linkDataframe = pd.read_table('f6-archs4.dir/archs4-matrix_links.txt')
-
-
-@follows(mkdir('f6-archs4.dir/json'))
-
-@subdivide(getMatrixLinks,
-		   regex(r'(.*)/archs4-matrix_links.txt'),
-		   r'\1/json/*-viz.json',
-		   r'\1/json')
-
-def getVizJson(infile, outfiles, outfileRoot):
-
-	# Read link dataframe
-	linkDataframe = pd.read_table(infile)
-
-	# Loop through dataframe
-	for dataset_accession, series_matrix_url in linkDataframe.iloc[:5].as_matrix():
-
-		# Initialize series matrix
-		seriesMatrix = SeriesMatrix(series_matrix_url)
-
-		# Get expression data
-		seriesMatrix.get_expression_data()
-
-		# Get sample metadata
-		seriesMatrix.get_sample_metadata()
-
-		# Get outfile
-		outfile = '{outfileRoot}/{dataset_accession}.json'.format(**locals())
-
-		# Write JSON
-		seriesMatrix.get_clustergrammer_json(outfile)
+	cannedAnalysisDataframe.to_csv(outfile, sep='\t', index=False)
 
 
 ##################################################
