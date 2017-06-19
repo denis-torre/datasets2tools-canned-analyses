@@ -375,7 +375,7 @@ def getGenemaniaLinks(infile, outfile):
 		
 		# Link dict
 		try:
-			linkDict[creedsId] = sig.get_genemania_url(rowData['organism'])
+			linkDict[creedsId] = sig.get_genemania_url(rowData['organism'], cutoff=25)
 		except:
 			linkDict[creedsId] = {'up': None, 'down': None}
 
@@ -439,6 +439,34 @@ def makeGenemaniaCannedAnalyses(infiles, outfile):
 	# Save file
 	cannedAnalysisDataframe.to_csv(outfile, sep='\t', index=False)
 
+#############################################
+########## 3. Merge canned analyses
+#############################################
+
+@merge(makeGenemaniaCannedAnalyses,
+	   'f3-genemania.dir/genemania-canned_analyses.txt')
+
+def mergeGenemaniaCannedAnalyses(infiles, outfile):
+
+	# Read infiles
+	mergedDataframe = pd.concat([pd.read_table(x) for x in infiles])
+
+	# Fix URLs
+	for index, rowData in mergedDataframe.iterrows():
+
+		# While length is longer than 255
+		while len(rowData['canned_analysis_url']) > 255:
+
+			print rowData['canned_analysis_url']
+
+			# Fix length
+			rowData['canned_analysis_url'] = '|'.join(rowData['canned_analysis_url'].split('|')[:-1])
+
+	# Drop duplicates
+	mergedDataframe.drop_duplicates('canned_analysis_url', inplace=True)
+
+	# Save
+	mergedDataframe.to_csv(outfile, sep='\t', index=False)
 
 #################################################################
 #################################################################
